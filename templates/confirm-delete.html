@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>uplite - Confirm Delete</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Confirm Delete</h1>
+    <p>
+      Are you sure you want to delete 
+      <strong>
+        <span class="long-text" title="{{ fileName }}">{{ fileName }}</span>
+      </strong>?
+    </p>
+    <form action="/delete/{{ fileName | url_encode }}" method="post" class="confirm-form">
+      <button type="submit" class="btn delete">Yes</button>
+      <a href="/" class="btn">Cancel</a>
+    </form>
+  </div>
+</body>
+</html>

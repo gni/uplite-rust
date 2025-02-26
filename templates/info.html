@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>uplite - File Information</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>File Information</h1>
+    <ul class="info-list">
+      <li>
+        <strong>Name:</strong>
+        <span class="long-text" title="{{ fileInfo.name }}">{{ fileInfo.name }}</span>
+      </li>
+      <li><strong>Size:</strong> {{ fileInfo.size }}</li>
+      <li><strong>Last Modified:</strong> {{ fileInfo.modified }}</li>
+      <li>
+        <strong>Absolute Path:</strong>
+        <span class="long-text" id="absolutePath" title="{{ fileInfo.absolutePath }}">{{ fileInfo.absolutePath }}</span>
+        <button class="btn info" id="copyButton" style="margin-left:10px;">Copy</button>
+      </li>
+      <li><strong>Host:</strong> {{ fileInfo.host }}</li>
+      <li><strong>User IP:</strong> {{ fileInfo.userIP }}</li>
+    </ul>
+    <a href="/" class="btn">Back</a>
+  </div>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const copyButton = document.getElementById("copyButton");
+      const absolutePath = document.getElementById("absolutePath").textContent.trim();
+      async function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.style.position = "fixed";
+          textarea.style.left = "-9999px";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+        }
+      }
+      copyButton.addEventListener("click", async () => {
+        try {
+          await copyText(absolutePath);
+          const originalText = copyButton.textContent;
+          copyButton.textContent = "Copied";
+          copyButton.disabled = true;
+          setTimeout(() => {
+            copyButton.textContent = originalText;
+            copyButton.disabled = false;
+          }, 2000);
+        } catch (err) {
+          console.error("Failed to copy path:", err);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

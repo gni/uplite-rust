@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>uplite</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const form = document.getElementById('uploadForm');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+
+        // Highlight drop zone when a file is dragged over it
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        // Handle file drop
+        dropZone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            await handleUpload(e.dataTransfer.files);
+        });
+
+        // Open file dialog when drop zone is clicked
+        dropZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // Handle file selection via file input
+        fileInput.addEventListener('change', async () => {
+            await handleUpload(fileInput.files);
+        });
+
+        // Handle file upload with progress tracking
+        async function handleUpload(files) {
+            if (!files.length) {
+                alert("Please select at least one file.");
+                return;
+            }
+        
+            const formData = new FormData();
+            for (const file of files) {
+                formData.append("file", file);
+            }
+        
+            progressBar.style.display = "block";
+            progressText.style.display = "block";
+            progressBar.value = 0;
+            progressText.textContent = `Uploading... 0%`;
+        
+            try {
+                const response = await fetchWithProgress(form.action, formData, (percent) => {
+                    progressBar.value = percent;
+                    progressText.textContent = `Uploading... ${percent}%`;
+                });
+        
+                if (response.status >= 200 && response.status < 300) {
+                    window.location.reload();
+                } else {
+                    const errorText = response.responseText || "Upload failed.";
+                    console.error("Upload failed with status:", response.status, "Message:", errorText);
+                    alert(`Upload failed: ${errorText}`);
+                }
+            } catch (err) {
+                console.error("Upload error:", err);
+                alert("An error occurred during upload.");
+            } finally {
+                progressBar.style.display = "none";
+                progressText.style.display = "none";
+            }
+        }
+        
+        // Custom fetch with progress tracking using XMLHttpRequest
+        async function fetchWithProgress(url, formData, onProgress) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open("POST", url);
+        
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = Math.round((event.loaded / event.total) * 100);
+                        onProgress(percentComplete);
+                    }
+                };
+        
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve(xhr.responseText);
+                    } else {
+                        reject(new Error(`Upload failed with status: ${xhr.status}`));
+                    }
+                };
+        
+                xhr.onerror = () => reject(new Error("Upload failed"));
+                xhr.send(formData);
+            });
+        }
+        
+        
+        // Custom fetch with progress tracking
+        async function fetchWithProgress(url, formData, onProgress) {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url);
+
+            return new Promise((resolve, reject) => {
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = Math.round((event.loaded / event.total) * 100);
+                        onProgress(percentComplete);
+                    }
+                };
+
+                xhr.onload = () => resolve(xhr);
+                xhr.onerror = () => reject(new Error('Upload failed'));
+                xhr.send(formData);
+            });
+        }
+    });
+</script>
+</head>
+<body>
+  <div class="container">
+    <h1 class="title">uplite</h1>
+    <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
+      <div id="dropZone" class="drop-zone">
+        <p>Drag & Drop files here, or click to select files</p>
+        <input type="file" id="fileInput" name="file" multiple hidden required>
+      </div>
+      <progress id="progressBar" max="100" value="0" style="width: 100%; display: none;"></progress>
+      <p id="progressText" style="display: none; font-size: 1rem; margin-top: 10px;"></p>
+    </form>
+    <ul class="file-list">
+      {% for file in files %}
+      <li class="file-item">
+        {% if file is ends_with(".jpg")
+            or file is ends_with(".jpeg")
+            or file is ends_with(".png")
+            or file is ends_with(".gif")
+            or file is ends_with(".svg") %}
+        <img src="/downloads/{{ file | url_encode }}" alt="{{ file }}" class="thumbnail">
+        {% endif %}
+        <span title="{{ file }}">{{ file }}</span>
+
+
+        <div class="actions">
+          <a href="/downloads/{{ file | url_encode }}" class="btn">Download</a>
+          <a href="/info/{{ file | url_encode }}" class="btn info">Info</a>
+          <a href="/delete/{{ file | url_encode }}" class="btn delete">Delete</a>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</body>
+</html>
