@@ -22,17 +22,16 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tera::{Context as TeraContext, Tera};
+use tera::{Context as TeraContext, Tera, to_value, Value};
 use base64::{engine::general_purpose, Engine as _};
 use regex::Regex;
 use actix_web::http::header::HeaderValue;
 use hostname::get as get_hostname;
-use tera::{try_get_value, to_value, Value};
 use std::collections::HashMap;
 use urlencoding::encode;
 
-
 use rust_embed::RustEmbed;
+use mime_guess::from_path;
 
 #[derive(RustEmbed)]
 #[folder = "templates/"]
@@ -41,7 +40,6 @@ pub struct Templates;
 #[derive(RustEmbed)]
 #[folder = "public/"]
 pub struct PublicFiles;
-
 
 fn url_encode_filter(value: &Value, _args: &HashMap<String, Value>) -> tera::Result<Value> {
     if let Some(s) = value.as_str() {
@@ -52,12 +50,10 @@ fn url_encode_filter(value: &Value, _args: &HashMap<String, Value>) -> tera::Res
 }
 
 fn custom_ends_with_test(value: Option<&Value>, args: &[Value]) -> tera::Result<bool> {
-    // Expect a value, and convert it to a string slice.
     let s = match value {
         Some(val) => val.as_str().ok_or("ends_with test: value is not a string")?,
         None => return Ok(false),
     };
-    // We expect exactly one argument, the suffix.
     if args.len() != 1 {
         return Err("ends_with test: expected exactly one argument".into());
     }
@@ -65,7 +61,18 @@ fn custom_ends_with_test(value: Option<&Value>, args: &[Value]) -> tera::Result<
     Ok(s.ends_with(suffix))
 }
 
-
+/// Load embedded templates into a Tera instance.
+fn load_embedded_templates() -> tera::Result<Tera> {
+    let mut tera = Tera::default();
+    for file in Templates::iter() {
+        if let Some(content) = Templates::get(&file) {
+            let s = std::str::from_utf8(content.data.as_ref())
+                .map_err(|e| tera::Error::msg(format!("UTF8 error in {}: {}", file, e)))?;
+            tera.add_raw_template(&file, s)?;
+        }
+    }
+    Ok(tera)
+}
 
 /// Command-line configuration options.
 #[derive(Parser, Debug, Clone)]
@@ -122,7 +129,6 @@ struct AppState {
 
 /// Generates a simple random alphanumeric password.
 fn generate_simple_random_password(length: usize) -> String {
-    // Use thread_rng (even if deprecated warnings appear)
     let mut rng = rng();
     let chars = b"abcdefghijklmnopqrstuvwxyz0123456789";
     (0..length)
@@ -155,6 +161,20 @@ fn check_auth_header(auth: Option<HeaderValue>, config: &Config) -> Result<(), H
     Err(resp.finish())
 }
 
+/// Handler to serve embedded static files from the "public" folder.
+async fn embedded_static(req: HttpRequest) -> Result<HttpResponse, Error> {
+    // Extract the path from the URL (everything after /static/)
+    let path: String = req.match_info().query("filename").parse().unwrap_or_default();
+    if let Some(content) = PublicFiles::get(&path) {
+        let mime = from_path(&path).first_or_octet_stream();
+        Ok(HttpResponse::Ok()
+            .content_type(mime.as_ref())
+            .body(content.data.into_owned()))
+    } else {
+        Ok(HttpResponse::NotFound().body("Not Found"))
+    }
+}
+
 /// Renders the index page.
 async fn index(_req: HttpRequest, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
     let mut entries: Vec<(String, u64)> = vec![];
@@ -183,12 +203,10 @@ async fn index(_req: HttpRequest, data: web::Data<AppState>) -> Result<HttpRespo
         eprintln!("Tera render error: {:?}", e);
         ErrorInternalServerError(e)
     })?;
-    
     Ok(HttpResponse::Ok().content_type("text/html").body(rendered))
 }
 
 /// Handles file uploads via multipart/form-data.
-/// Each file is opened once and wrapped in an Arc<Mutex<_>> for safe blocking I/O.
 async fn upload(mut payload: Multipart, _req: HttpRequest, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
     let config = &data.config;
     let allowed_extensions = config.allowed_extensions();
@@ -233,10 +251,9 @@ async fn upload(mut payload: Multipart, _req: HttpRequest, data: web::Data<AppSt
 }
 
 /// Renders a page displaying detailed file information.
-async fn info(req: HttpRequest, data: web::Data<AppState>, path: web::Path<String>) -> Result<HttpResponse, Error> {
+async fn info(_req: HttpRequest, data: web::Data<AppState>, path: web::Path<String>) -> Result<HttpResponse, Error> {
     let filename = path.into_inner();
-    let safe_filename = Path::new(&filename).file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let filepath = data.upload_dir.join(safe_filename);
+    let filepath = data.upload_dir.join(&filename);
     if !filepath.exists() {
         return Ok(HttpResponse::NotFound().body("File not found."));
     }
@@ -246,16 +263,12 @@ async fn info(req: HttpRequest, data: web::Data<AppState>, path: web::Path<Strin
         .map(|d| format!("{} seconds ago", d.as_secs()))
         .unwrap_or_else(|| "unknown".to_string());
     let host = get_hostname().unwrap_or_else(|_| "unknown".into()).to_string_lossy().into_owned();
-    let user_ip = req.peer_addr().map(|addr| addr.ip().to_string()).unwrap_or_else(|| "unknown".to_string());
     let file_info = json!({
-        "name": safe_filename,
+        "name": filename,
         "size": format!("{:.2} MB", size_mb),
         "modified": modified,
         "absolutePath": filepath.to_string_lossy(),
-        "os": std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "unknown".to_string()),
-        "arch": std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "unknown".to_string()),
         "host": host,
-        "userIP": user_ip,
     });
     let mut ctx = TeraContext::new();
     ctx.insert("fileInfo", &file_info);
@@ -266,13 +279,12 @@ async fn info(req: HttpRequest, data: web::Data<AppState>, path: web::Path<Strin
 /// Renders a confirmation page for file deletion.
 async fn delete_confirm(_req: HttpRequest, data: web::Data<AppState>, path: web::Path<String>) -> Result<HttpResponse, Error> {
     let filename = path.into_inner();
-    let safe_filename = Path::new(&filename).file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let filepath = data.upload_dir.join(safe_filename);
+    let filepath = data.upload_dir.join(&filename);
     if !filepath.exists() {
         return Ok(HttpResponse::NotFound().body("File not found."));
     }
     let mut ctx = TeraContext::new();
-    ctx.insert("fileName", safe_filename);
+    ctx.insert("fileName", &filename);
     let rendered = data.tera.render("confirm-delete.html", &ctx).map_err(ErrorInternalServerError)?;
     Ok(HttpResponse::Ok().content_type("text/html").body(rendered))
 }
@@ -280,10 +292,8 @@ async fn delete_confirm(_req: HttpRequest, data: web::Data<AppState>, path: web:
 /// Deletes the specified file and redirects to the index.
 async fn delete_file(_req: HttpRequest, data: web::Data<AppState>, path: web::Path<String>) -> Result<HttpResponse, Error> {
     let filename = path.into_inner();
-    let safe_filename = Path::new(&filename).file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let filepath = data.upload_dir.join(safe_filename);
+    let filepath = data.upload_dir.join(&filename);
     if filepath.exists() {
-        // Ignore the result.
         let _ = web::block(move || stdfs::remove_file(filepath))
             .await
             .map_err(ErrorInternalServerError)?;
@@ -327,7 +337,6 @@ where
     }
     
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        // Skip auth for /static
         if req.path().starts_with("/static") {
             let svc = self.service.clone();
             Box::pin(async move {
@@ -341,7 +350,6 @@ where
                 .expect("AppState missing")
                 .config
                 .clone();
-            // Use only the Authorization header
             let auth_result = check_auth_header(req.headers().get("Authorization").cloned(), &config);
             let svc = self.service.clone();
             Box::pin(async move {
@@ -357,6 +365,7 @@ where
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
+
     let mut config = Config::parse();
     if config.password == "password" {
         config.password = generate_simple_random_password(8);
@@ -365,6 +374,7 @@ async fn main() -> std::io::Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(&config.dir));
     stdfs::create_dir_all(&upload_dir).expect("Failed to create upload directory");
+
     println!("\n=== uplite server is running ===\n");
     println!(" - Shared Folder     : {:?}", upload_dir);
     println!(" - Username          : {}", config.user);
@@ -378,14 +388,18 @@ async fn main() -> std::io::Result<()> {
     );
     println!(" - Max Files/Upload  : {}", config.max_files);
     println!(" - Max File Size     : {:.2} MB\n", (config.max_size as f64) / (1024.0 * 1024.0));
-    let mut tera = Tera::new("templates/**/*").expect("Error initializing Tera templates");
+
+    // Load embedded templates.
+    let mut tera = load_embedded_templates().expect("Error loading embedded templates");
     tera.register_filter("url_encode", url_encode_filter);
     tera.register_tester("ends_with", custom_ends_with_test);
+
     let state = web::Data::new(AppState {
         config: config.clone(),
         tera,
         upload_dir: upload_dir.clone(),
     });
+
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
@@ -396,7 +410,22 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(BasicAuth)
             .app_data(state.clone())
-            .service(fs::Files::new("/static", "./public").show_files_listing())
+            // Serve embedded static files on /static
+            .service(
+                web::resource("/static/{filename:.*}")
+                    .route(web::get().to(|req: HttpRequest| async move {
+                        let filename: String = req.match_info().query("filename").parse().unwrap_or_default();
+                        if let Some(content) = PublicFiles::get(&filename) {
+                            let mime = from_path(&filename).first_or_octet_stream();
+                            Ok::<HttpResponse, Error>(HttpResponse::Ok()
+                                .content_type(mime.as_ref())
+                                .body(content.data.into_owned()))
+                        } else {
+                            Ok::<HttpResponse, Error>(HttpResponse::NotFound().body("Not Found"))
+                        }
+                    }))
+            )
+            // Serve uploaded files on /downloads (not embedded)
             .service(fs::Files::new("/downloads", state.upload_dir.to_str().unwrap()).show_files_listing())
             .service(
                 web::scope("")
