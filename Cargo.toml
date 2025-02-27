@@ -6,7 +6,6 @@ authors = ["Lucian <neuraluc@gmail.com>"]
 description = "a lightweight, self-hosted file upload, browsing, and management tool"
 categories = [
   "command-line-utilities",
-  "development-tools::command-line",
   "web-programming",
   "network-programming"
 ]
