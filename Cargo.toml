@@ -11,21 +11,11 @@ categories = [
   "network-programming"
 ]
 keywords = [
-  "cli",
   "file-sharing",
   "file-upload",
-  "uplite",
-  "secure",
   "lightweight",
-  "actix",
-  "rust",
   "embedded",
-  "server",
-  "template",
-  "basic-auth",
-  "file-management",
-  "command-line",
-  "rust-embed"
+  "file-management"
 ]
 license = "MIT"
 readme = "readme.md"
