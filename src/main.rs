@@ -161,19 +161,6 @@ fn check_auth_header(auth: Option<HeaderValue>, config: &Config) -> Result<(), H
     Err(resp.finish())
 }
 
-/// Handler to serve embedded static files from the "public" folder.
-async fn embedded_static(req: HttpRequest) -> Result<HttpResponse, Error> {
-    // Extract the path from the URL (everything after /static/)
-    let path: String = req.match_info().query("filename").parse().unwrap_or_default();
-    if let Some(content) = PublicFiles::get(&path) {
-        let mime = from_path(&path).first_or_octet_stream();
-        Ok(HttpResponse::Ok()
-            .content_type(mime.as_ref())
-            .body(content.data.into_owned()))
-    } else {
-        Ok(HttpResponse::NotFound().body("Not Found"))
-    }
-}
 
 /// Renders the index page.
 async fn index(_req: HttpRequest, data: web::Data<AppState>) -> Result<HttpResponse, Error> {
@@ -198,7 +185,6 @@ async fn index(_req: HttpRequest, data: web::Data<AppState>) -> Result<HttpRespo
     let files: Vec<String> = entries.into_iter().map(|(name, _)| name).collect();
     let mut ctx = TeraContext::new();
     ctx.insert("files", &files);
-    eprintln!("Files: {:?}", files);
     let rendered = data.tera.render("index.html", &ctx).map_err(|e| {
         eprintln!("Tera render error: {:?}", e);
         ErrorInternalServerError(e)
